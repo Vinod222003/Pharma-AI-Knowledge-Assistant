@@ -1,0 +1,14 @@
+SYNTHETIC TRAINING EXAMPLE — NOT AN APPROVED SOP
+Document ID: DEMO-QA-001 | Version: 1.0 | Department: Quality
+
+Purpose
+This fictional example demonstrates how a quality event may be documented in a training environment.
+
+Recording a deviation
+The example record includes an event identifier, date and time observed, process or area, concise factual description, immediate containment action if applicable, reporter, and reference to supporting evidence.
+
+Review
+A designated quality reviewer evaluates the record for completeness. This training text does not define real company requirements, regulatory obligations, or product disposition decisions.
+
+Traceability
+Changes to this example record should be documented with the editor, timestamp, and reason for change.

@@ -1,0 +1,10 @@
+[
+  {
+    "question": "What is the purpose of the synthetic deviation recording procedure?",
+    "expected_source": "demo_deviation_procedure.txt"
+  },
+  {
+    "question": "Which fields should be included in the example quality event record?",
+    "expected_source": "demo_deviation_procedure.txt"
+  }
+]
