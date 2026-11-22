@@ -12,3 +12,10 @@ data/*.db
 *.log
 .DS_Store
 .vscode/
+
+# Local code backups
+*.py.bak
+*.py.step*.bak
+
+# Local environment backups
+.env.rotation.bak

@@ -1,124 +1,56 @@
 # Enterprise AI Regulatory & Medical Knowledge Assistant
-**Capstone project starter — Advanced RAG for pharmaceutical operations**
 
-This repository provides a runnable end-to-end application scaffold with:
-- FastAPI backend and Streamlit interface
-- PostgreSQL document metadata and audit records
-- ChromaDB vector retrieval
-- OpenAI-compatible LLM and embeddings integration
-- PDF, DOCX, TXT, CSV and XLSX ingestion
-- Query expansion, hybrid retrieval, metadata filtering, reranking, context compression and conversation history hooks
-- JWT authentication with role-based access scaffolding
-- Document versioning, source citations, evaluation script, Docker Compose and synthetic demo files
+Educational pharmaceutical document-search capstone using FastAPI, PostgreSQL, ChromaDB, Ollama, and Streamlit. **Not a validated GxP system.** Do not use for patient care, batch release, regulatory submissions, or operational decisions.
 
-> **Safety and scope:** This is an educational capstone, not a validated GxP system or medical/regulatory decision-maker. Demo content is synthetic and must not be treated as pharmaceutical guidance. Never upload confidential, personal, patient, or regulated company documents to an unapproved service. Validate all outputs with qualified personnel and approved source documents.
+## Existing installation: safe update
 
-## 1. Requirements
-- Python 3.14 (target)
-- PostgreSQL 18 (or compatible PostgreSQL)
-- OpenAI API key (or compatible endpoint)
-- Docker Desktop is optional for local development
+1. **Stop FastAPI and Streamlit. Back up the PostgreSQL database and `data/chroma` folder first.** Do not copy or delete database contents from another machine. If possible, test with a separate database first.
+2. Keep your existing `.env`, `data/uploads`, and `data/chroma` files. Do **not** replace them with archive copies.
+3. From your project root, activate `.venv` and run `python -m pip install -r requirements.txt`.
+4. Edit local `.env` to set `JWT_SECRET` to a random value of at least 32 characters and verify DATABASE_URL, OLLAMA_URL, OLLAMA_MODEL. Do not share `.env`.
+5. `python -m scripts.bootstrap_admin` creates an initial admin account. It does not overwrite existing users.
+6. Start backend: `python -m uvicorn app.main:app --reload`. Start UI in a second terminal: `python -m streamlit run ui/Home.py`.
+7. Open http://localhost:8501 and log in. API docs: http://127.0.0.1:8000/docs.
 
-Python 3.14 support varies by third-party package and platform. If installation reports that a dependency has no compatible wheel, do not force-install it; check the package's current Python support and use the documented alternative. The app itself targets Python 3.14.
+The new `users` table is created additively on startup by SQLAlchemy. **No existing document or audit table is dropped or changed.** Database changes should nevertheless be tested on a backed-up copy. The previous default API calls were anonymous; clients now require JWT login.
 
-## 2. Quick start — Windows PowerShell
-Run commands from the project root:
+## What changed
 
-```powershell
-# Activate the existing virtual environment
-.\.venv\Scripts\Activate.ps1
+- Explicit JWT authentication for protected APIs; admin user bootstrap; admin-managed user creation; role and department checks.
+- Upload validation (size, extension, some magic bytes), duplicate hash check, extraction before SQL commit, and Chroma cleanup on failure.
+- Version status changes: new active document replaces earlier active versions with the same filename and department; earlier vectors remain stored but are excluded from retrieval through SQL active-status checking.
+- Query retrieval: allowed active document IDs, vector + bounded lexical candidates, word overlap gates, reciprocal-rank fusion, limited context, and cited-label verification.
+- Configurable Ollama model/URL and a revised Streamlit dashboard.
+- Unit tests and authenticated source-recall evaluator.
 
-# Update packaging tools
-python -m pip install --upgrade pip setuptools wheel
+## Security and limitations
 
-# Install application dependencies
-python -m pip install -r requirements.txt
+- Local prototype only. Not independently penetration-tested, GxP validated, or regulator-approved.
+- Citation label verification does **not** prove each claim is entailed by the source. Human verification is mandatory.
+- Retrieval thresholds are heuristics, not calibrated; a relevant short answer may be rejected, and unrelated overlapping material may still be returned. Tune with a labeled test collection.
+- The lexical pass examines at most 2,000 chunks per query. This is for small capstone corpora, not enterprise scale.
+- The project does not provide transactionally atomic updates across PostgreSQL, the file system, and ChromaDB. Recovery cleanup is best-effort and should be monitored.
+- Simple metadata checks do not protect against every malformed file or malicious document. Only upload trusted documents in a local demo.
+- Existing files already indexed by an earlier software version remain eligible if their SQL record is active. Review and supersede/restrict unrelated demo documents before using evaluations.
+- JWTs are stored only in Streamlit session state and expire based on configured lifetime. Use HTTPS in any non-local deployment.
+- No OCR for scanned PDFs; no production migrations, user-password reset workflow, or full audit of external admin actions.
+- No Docker required for local mode. Ollama must be running and its configured model installed.
 
-# Create local environment file
-Copy-Item .env.example .env
+## Tests
 
-# Edit .env and enter your API key and PostgreSQL connection details.
-# Do not share .env or commit it to Git.
+Run `python -m pytest -q`. For integration evaluation, configure `EVAL_USERNAME` and `EVAL_PASSWORD` in your local shell (never share them), then run `python -m scripts.evaluate`. Source recall is only one metric; manually inspect citation grounding, refusal accuracy, and answer relevance.
 
-# Create the PostgreSQL database (run in psql as a database administrator)
-# CREATE DATABASE pharma_rag;
+## Main API routes
 
-# Start the API
-python -m uvicorn app.main:app --reload
+- `POST /api/auth/login` anonymous login
+- `GET /api/auth/me` authenticated identity
+- `POST /api/users`, `GET /api/users` admin only
+- `POST /api/documents/upload` authenticated editor
+- `GET /api/documents` document library (scoped)
+- `POST /api/ask` grounded document question (scoped)
+- `GET /api/audit` admin only
+- `GET /health` basic service health
 
-# In a second terminal, activate .venv and start the UI
-streamlit run ui/Home.py
-```
+## Deployment
 
-Open:
-- API docs: http://127.0.0.1:8000/docs
-- Streamlit UI: http://localhost:8501
-- Health check: http://127.0.0.1:8000/health
-
-## 3. PostgreSQL setup
-The default database URL is:
-`postgresql+psycopg://postgres:CHANGE_ME@localhost:5432/pharma_rag`
-
-Change username/password in `.env`. Create the database first:
-```sql
-CREATE DATABASE pharma_rag;
-```
-Tables are created automatically on API startup for this development scaffold.
-
-## 4. Ingest and query
-1. Start the API and Streamlit UI using the commands above.
-2. Upload a synthetic or approved document.
-3. Ask a question that can be answered from the uploaded material.
-4. Review the returned source filenames, page numbers and excerpts.
-5. If evidence is insufficient, the assistant should say so rather than invent an answer.
-
-## 5. Roles
-The starter includes JWT/password utility functions and defines the intended `admin`, `regulatory`, `medical`, `quality`, and `viewer` role set. Full user management, login endpoints, and route-level authorization are not yet wired into the UI/API; treat authentication as a capstone implementation milestone, not a completed security feature. Before any real deployment, replace the default secret, enforce HTTPS, harden password policy, add account lifecycle controls, and conduct a security review.
-
-## 6. Advanced RAG modules
-- Query expansion: generate alternative searches from the original question.
-- Hybrid retrieval: combine vector similarity and lexical keyword matching.
-- Metadata filtering: filter by document type, version and department.
-- Reranking: rerank retrieved passages using lexical relevance as a baseline.
-- Context compression: trim passages to the most relevant sentences.
-- Conversation memory: retain recent turns in the UI session.
-- Versioning: each uploaded file is assigned a version number.
-- Citations: responses include source filename, page and excerpt.
-
-These are implemented as transparent baseline methods suitable for learning and evaluation. For a production-grade system, benchmark stronger cross-encoder rerankers, hybrid fusion strategies, access-control filtering at retrieval time, and a formally validated evaluation dataset.
-
-## 7. Evaluation
-Run:
-```powershell
-python -m pip install -r requirements.txt
-python scripts/evaluate.py
-```
-The included evaluation file is a small synthetic smoke-test set, not evidence of regulatory validation. Expand it with expert-reviewed questions, expected evidence, groundedness, citation precision/recall, retrieval recall@k, latency and failure analysis.
-
-## 8. Git / GitHub
-```powershell
-git init
-git add .
-git commit -m "Initial capstone project scaffold"
-```
-Create an empty GitHub repository, then follow GitHub's displayed instructions to add its remote and push. Never commit `.env`, API keys, real pharmaceutical documents, local databases, `.venv`, or Chroma storage.
-
-## 9. Troubleshooting
-- **Python warning about platform independent libraries:** this can indicate a Python installation/venv configuration issue. If Python and pip work, the app can still be generated; investigate before installing packages if imports or installs fail.
-- **Dependency has no Python 3.14 wheel:** check the package's official release notes. Do not randomly downgrade packages. This scaffold keeps dependencies in one requirements file so they can be adjusted.
-- **PostgreSQL connection refused:** confirm the PostgreSQL service is running, the database exists, and `.env` credentials are correct.
-- **Chroma storage:** local vector data is stored under `data/chroma/` and is excluded from Git.
-- **Docker engine unavailable:** use the local Python steps above; Docker is optional.
-
-## Project layout
-```text
-app/
-  api/             FastAPI routes
-  core/            settings, auth and database
-  rag/             loaders, chunking, retrieval, generation
-  models/           SQLAlchemy models
-ui/                 Streamlit user interface
-data/demo_docs/     Synthetic demo source
-scripts/            Evaluation helper
-tests/              Smoke tests
-```
+Local first. This educational build does not promise clinical safety, confidentiality, availability, or regulatory compliance. Review migration, access control, uploads, auditability, data retention, encryption, and validation before any real deployment.
