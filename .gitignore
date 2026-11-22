@@ -12,3 +12,12 @@ data/*.db
 *.log
 .DS_Store
 .vscode/
+
+# Local backups and temporary archives
+backup/
+**/backup/
+*.backup
+*.zip
+
+# Synthetic versioning test
+/Pharma_AI_Knowledge_Assistant/data/demo_docs/versioning_test.txt
