@@ -16,3 +16,8 @@ python-dotenv>=1.0
 httpx>=0.28
 pytest>=8.3
 requests>=2.32
+
+# Source-referenced PDF reports
+reportlab>=4.2
+# Optional local CrossEncoder (enable RAG_RERANKER_ENABLED=true to use)
+# pip install sentence-transformers>=3.0

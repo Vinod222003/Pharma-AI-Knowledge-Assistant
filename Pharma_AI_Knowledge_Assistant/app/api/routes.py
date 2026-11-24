@@ -4,6 +4,8 @@ import re
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
+from io import BytesIO
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,6 +16,10 @@ from app.models.document import Document, AuditLog, User
 from app.rag.loaders import SUPPORTED, chunk_text, load_file
 from app.rag.retrieval import add_chunks, delete_document_chunks
 from app.rag.answer import answer_question
+from app.rag.retrieval import retrieve
+from app.intelligence.operations import document_analytics, compare_versions, evidence_gap_analysis
+from app.intelligence.reporting import build_report
+from app.intelligence.evaluation import evaluate_case
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -172,3 +178,83 @@ def audit(user: User = Depends(current_user), db: Session = Depends(get_db)):
         raise HTTPException(403, "Admin permission required")
     return [{"username": x.username, "action": x.action, "detail": x.detail, "created_at": x.created_at.isoformat()}
             for x in db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(200)).all()]
+
+
+# All intelligence endpoints enforce the same session / department controls as /api/ask.
+class AgentRequest(AskRequest):
+    agent: str = "auto"
+
+class GapRequest(BaseModel):
+    checklist: str = Field(min_length=5, max_length=2000)
+    department: str | None = None
+
+class ReportRequest(AgentRequest):
+    title: str = Field(default="Pharma AI Evidence Report", max_length=100)
+
+
+def scoped_departments(user: User, department: str | None) -> set[str]:
+    permitted = allowed_departments(user)
+    if department is not None:
+        if department not in DEPARTMENTS or department not in permitted:
+            raise HTTPException(403, "Department not permitted")
+        return {"general", department} if department != "general" else {"general"}
+    return permitted
+
+@router.get("/analytics")
+def analytics(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return document_analytics(db, allowed_departments(user), admin=user.role == "admin")
+
+@router.get("/documents/compare")
+def compare_documents(first_id: int = Query(ge=1), second_id: int = Query(ge=1),
+                      user: User = Depends(current_user), db: Session = Depends(get_db)):
+    try:
+        result = compare_versions(db, first_id, second_id, allowed_departments(user))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    db.add(AuditLog(username=user.username, action="sop_comparison", detail=f"ids={first_id},{second_id}"))
+    db.commit()
+    return result
+
+@router.post("/agents/ask")
+def ask_agent(req: AgentRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not req.question.strip():
+        raise HTTPException(400, "Question cannot be empty")
+    if req.agent not in {"auto", "quality_agent", "regulatory_agent", "document_agent"}:
+        raise HTTPException(400, "Unknown agent")
+    response = answer_question(req.question.strip(), scoped_departments(user, req.department), agent=req.agent)
+    db.add(AuditLog(username=user.username, action="agent_question", detail=f"agent={response.get('agent', req.agent)}; sources={len(response['sources'])}"))
+    db.commit()
+    return response
+
+@router.post("/compliance/gap-check")
+def gap_check(req: GapRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    # Retrieves only currently active, department-allowed passages.
+    scope = scoped_departments(user, req.department)
+    passages = retrieve(req.checklist, n=10, departments=scope)
+    try:
+        result = evidence_gap_analysis(req.checklist, passages)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    db.add(AuditLog(username=user.username, action="gap_check", detail=f"checks={result['total_checks']}"))
+    db.commit()
+    return result
+
+@router.post("/reports/answer.pdf")
+def answer_pdf(req: ReportRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if req.agent not in {"auto", "quality_agent", "regulatory_agent", "document_agent"}:
+        raise HTTPException(400, "Unknown agent")
+    result = answer_question(req.question.strip(), scoped_departments(user, req.department), agent=req.agent)
+    content = build_report(req.title, req.question, result["answer"], result["sources"])
+    db.add(AuditLog(username=user.username, action="report_download", detail=f"sources={len(result['sources'])}"))
+    db.commit()
+    return StreamingResponse(BytesIO(content), media_type="application/pdf", headers={"Content-Disposition": 'attachment; filename="pharma_evidence_report.pdf"', "Cache-Control": "no-store"})
+
+@router.post("/evaluation/case")
+def evaluate_answer(req: AgentRequest, user: User = Depends(current_user)):
+    # Explicit per-case evaluation; non-production metric, costs one Ollama call.
+    if req.agent not in {"auto", "quality_agent", "regulatory_agent", "document_agent"}:
+        raise HTTPException(400, "Unknown agent")
+    result = answer_question(req.question.strip(), scoped_departments(user, req.department), agent=req.agent)
+    return {"result": result, "metrics": evaluate_case(result)}

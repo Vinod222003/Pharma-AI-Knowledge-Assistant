@@ -77,14 +77,20 @@ def retrieve(query: str, n: int = 5, departments: set[str] | None = None):
     filtered = [x for x in items if x["lexical"] >= minimum and x["coverage"] >= 0.34]
     if not filtered:
         return []
-    vector_rank = {ident: rank for rank, ident in enumerate(vector["ids"][0], 1)}
-    lexical_sorted = sorted(filtered, key=lambda x: (x["coverage"], x["lexical"]), reverse=True)
-    lexical_rank = {x["id"]: rank for rank, x in enumerate(lexical_sorted, 1)}
-    for x in filtered:
-        x["score"] = 1 / (60 + lexical_rank[x["id"]]) + (1 / (60 + vector_rank[x["id"]]) if x["id"] in vector_rank else 0)
-        x["score"] += 0.025 * x["coverage"]
-    filtered.sort(key=lambda x: (x["score"], x["coverage"]), reverse=True)
-    return filtered[:n]
+    from app.rag.hybrid import bm25_scores, reciprocal_rank_fusion, rerank
+    bm25 = bm25_scores(query, filtered)
+    vector_rank = [ident for ident in vector["ids"][0] if ident in {x['id'] for x in filtered}]
+    keyword_rank = [x['id'] for x in sorted(filtered, key=lambda x: (bm25.get(x['id'], 0), x['coverage']), reverse=True)]
+    fused = reciprocal_rank_fusion([vector_rank, keyword_rank])
+    for item in filtered:
+        item['bm25'] = round(bm25.get(item['id'], 0), 5)
+        item['score'] = fused.get(item['id'], 0) + 0.025 * item['coverage']
+    filtered.sort(key=lambda x: (x['score'], x['coverage']), reverse=True)
+    # Rank only a small authorized shortlist; heavy reranker is opt-in.
+    shortlisted = filtered[:max(n * 3, 10)]
+    if settings.rag_reranker_enabled:
+        shortlisted = rerank(query, shortlisted, settings.rag_reranker_model)
+    return shortlisted[:n]
 
 def compress_context(question, passages, max_chars=6500):
     query_terms = set(terms(question))

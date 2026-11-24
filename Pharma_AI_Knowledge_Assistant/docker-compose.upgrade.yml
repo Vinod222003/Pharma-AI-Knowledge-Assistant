@@ -1,0 +1,26 @@
+# Optional local/demo Docker overlay; requires existing .env and external Ollama service.
+# Run: docker compose -f docker-compose.yml -f docker-compose.upgrade.yml up --build
+# NOTE: adjust OLLAMA_URL if the Ollama server runs in a different network.
+services:
+  api:
+    environment:
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      CHROMA_PATH: /workspace/data/chroma
+      UPLOAD_DIR: /workspace/data/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - chromadata:/workspace/data/chroma
+      - uploads:/workspace/data/uploads
+  ui:
+    build: .
+    command: python -m streamlit run ui/Home.py --server.address=0.0.0.0 --server.port=8501
+    environment:
+      API_BASE_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+volumes:
+  chromadata:
+  uploads:

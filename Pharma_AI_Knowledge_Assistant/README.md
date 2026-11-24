@@ -2,6 +2,8 @@
 
 Educational pharmaceutical document-search capstone using FastAPI, PostgreSQL, ChromaDB, Ollama, and Streamlit. **Not a validated GxP system.** Do not use for patient care, batch release, regulatory submissions, or operational decisions.
 
+**Integrated v2 upgrade:** See [UPGRADE_GUIDE.md](UPGRADE_GUIDE.md) for the new retrieval, analytics, SOP comparison, specialized query routing, reports and evaluation interface.
+
 ## Existing installation: safe update
 
 1. **Stop FastAPI and Streamlit. Back up the PostgreSQL database and `data/chroma` folder first.** Do not copy or delete database contents from another machine. If possible, test with a separate database first.
@@ -22,6 +24,7 @@ The new `users` table is created additively on startup by SQLAlchemy. **No exist
 - Query retrieval: allowed active document IDs, vector + bounded lexical candidates, word overlap gates, reciprocal-rank fusion, limited context, and cited-label verification.
 - Configurable Ollama model/URL and a revised Streamlit dashboard.
 - Unit tests and authenticated source-recall evaluator.
+- v2: BM25, rank fusion, optional CrossEncoder, analytics dashboard, same-document SOP version diff, routed QA/regulatory/document prompts, heuristic checklist evidence checks and PDF export.
 
 ## Security and limitations
 

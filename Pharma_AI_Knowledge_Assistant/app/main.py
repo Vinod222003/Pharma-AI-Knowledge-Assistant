@@ -8,7 +8,7 @@ from app.api.routes import router
 Path("data").mkdir(exist_ok=True)
 # Safe additive table creation only. Existing documents and audit records are not dropped.
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title=settings.app_name, version="1.1.0",
+app = FastAPI(title=settings.app_name, version="2.0.0",
               description="Educational RAG prototype — not a validated GxP system")
 app.include_router(router, prefix="/api")
 

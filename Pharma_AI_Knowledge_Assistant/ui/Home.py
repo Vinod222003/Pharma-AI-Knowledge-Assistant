@@ -1,10 +1,11 @@
+import os
 import requests
 import streamlit as st
 
 st.set_page_config(page_title="Pharma AI Assistant", page_icon="🧪", layout="wide")
 st.title("🧪 Enterprise AI Regulatory & Medical Knowledge Assistant")
 st.warning("Educational capstone only. Not validated for GxP, patient care, batch release, regulatory submissions, or operational decisions.")
-API = st.sidebar.text_input("API URL", "http://127.0.0.1:8000").rstrip("/")
+API = st.sidebar.text_input("API URL", os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")).rstrip("/")
 
 def call(method, path, **kwargs):
     headers = {"Authorization": "Bearer " + st.session_state.token} if st.session_state.get("token") else {}
@@ -45,7 +46,7 @@ if st.sidebar.button("Sign out"):
 role = identity.get("role", "viewer")
 my_dept = identity.get("department", "general")
 options = ["general", "quality", "regulatory", "medical"] if role == "admin" else sorted({"general", my_dept})
-tabs = st.tabs(["Overview", "Ask AI", "Upload", "Documents", "Audit / Users"])
+tabs = st.tabs(["Overview", "Ask AI", "Upload", "Documents", "Audit / Users", "SOP Intelligence", "Evaluation & Reports"])
 
 with tabs[0]:
     st.subheader("Document overview")
@@ -55,20 +56,36 @@ with tabs[0]:
         c1.metric("Accessible versions", len(docs))
         c2.metric("Active documents", sum(x["status"] == "active" for x in docs))
         c3.metric("Superseded versions", sum(x["status"] == "superseded" for x in docs))
+        analytics = call("GET", "/api/analytics")
+        a, b = st.columns(2)
+        with a:
+            st.markdown("**Active documents by department**")
+            st.bar_chart(analytics.get("by_department", {}))
+        with b:
+            st.markdown("**Active documents by type**")
+            st.bar_chart(analytics.get("by_type", {}))
+        if role == "admin" and analytics.get("audit_action_counts"):
+            st.markdown("**Audited activity**")
+            st.bar_chart(analytics["audit_action_counts"])
     except Exception as exc:
         st.error(str(exc))
 
 with tabs[1]:
     question = st.text_area("Ask a question supported by your indexed documents", height=110)
     department = st.selectbox("Department", ["All accessible"] + options)
+    agent = st.selectbox("AI agent", ["auto", "quality_agent", "regulatory_agent", "document_agent"])
     if st.button("Ask assistant", type="primary"):
         if not question.strip():
             st.warning("Enter a question first")
         else:
             try:
-                result = call("POST", "/api/ask", json={"question": question,
-                              "department": None if department == "All accessible" else department})
+                result = call("POST", "/api/agents/ask", json={"question": question,
+                              "agent": agent, "department": None if department == "All accessible" else department})
+                st.session_state.last_question = question
+                st.session_state.last_department = None if department == "All accessible" else department
+                st.session_state.last_agent = agent
                 st.markdown("### Answer")
+                st.caption("Agent: " + result.get("agent", agent))
                 st.write(result["answer"])
                 st.markdown("### Cited evidence")
                 for src in result.get("sources", []):
@@ -99,7 +116,7 @@ with tabs[3]:
         st.rerun()
     try:
         docs = call("GET", "/api/documents")
-        st.dataframe(docs, use_container_width=True, hide_index=True)
+        st.dataframe(docs, width="stretch", hide_index=True)
         st.caption("Rows with the same filename and department show document version history. Only active versions are searchable.")
     except Exception as exc:
         st.error(str(exc))
@@ -110,9 +127,9 @@ with tabs[4]:
     else:
         try:
             st.subheader("Recent audit events")
-            st.dataframe(call("GET", "/api/audit"), use_container_width=True, hide_index=True)
+            st.dataframe(call("GET", "/api/audit"), width="stretch", hide_index=True)
             st.subheader("Users")
-            st.dataframe(call("GET", "/api/users"), use_container_width=True, hide_index=True)
+            st.dataframe(call("GET", "/api/users"), width="stretch", hide_index=True)
         except Exception as exc:
             st.error(str(exc))
         with st.form("new_user"):
@@ -128,3 +145,69 @@ with tabs[4]:
                     "password": new_password, "role": new_role, "department": new_department}))
             except Exception as exc:
                 st.error(str(exc))
+
+
+with tabs[5]:
+    st.subheader("SOP version comparison")
+    st.caption("Compare two uploaded versions of the same SOP, subject to your document permissions.")
+    try:
+        library = call("GET", "/api/documents")
+        choices = {f"{x['id']} — {x['filename']} (v{x['version']}, {x['department']})": x['id'] for x in library}
+        if len(choices) >= 2:
+            left, right = st.columns(2)
+            with left:
+                first = st.selectbox("Original document", list(choices), key="compare_first")
+            with right:
+                second = st.selectbox("Updated document", list(choices), index=min(1, len(choices)-1), key="compare_second")
+            if st.button("Compare versions"):
+                out = call("GET", "/api/documents/compare", params={"first_id": choices[first], "second_id": choices[second]})
+                st.success("Change detected" if out['changed'] else "No textual difference")
+                st.code("\n".join(out['diff_lines']) or "No changes", language="diff")
+                st.caption(out['note'])
+        else:
+            st.info("Upload two versions of the same document to compare them.")
+    except Exception as exc:
+        st.error(str(exc))
+    st.divider()
+    st.subheader("Evidence-based checklist gap scan")
+    st.caption("This checks potential lexical evidence, not real-world GMP compliance.")
+    checklist = st.text_area("Separate checklist requirements using commas or semicolons", key="gap_text", placeholder="batch manufacturing record; certificate of analysis; environmental monitoring logs")
+    gap_department = st.selectbox("Checklist department", options, key="gap_department")
+    if st.button("Scan evidence", disabled=not checklist.strip()):
+        try:
+            gap = call("POST", "/api/compliance/gap-check", json={"checklist": checklist, "department": gap_department})
+            st.metric("Items with possible matching evidence", f"{gap['with_potential_evidence']} / {gap['total_checks']}")
+            st.dataframe([{"requirement": item['requirement'], "evidence_found": item['evidence_found'],
+                           "sources": ", ".join(s['filename'] for s in item['sources'])} for item in gap['checks']], width="stretch", hide_index=True)
+            st.warning(gap['disclaimer'])
+        except Exception as exc:
+            st.error(str(exc))
+
+with tabs[6]:
+    st.subheader("RAG response evaluation")
+    st.caption("Simple citation/reference checks, not validated faithfulness or clinical accuracy measurements.")
+    eval_question = st.text_area("Evaluation question", value="What are the mandatory batch release checklist requirements in SOP-002?", key="eval_question")
+    eval_department = st.selectbox("Evaluation department", options, key="eval_department")
+    if st.button("Evaluate response"):
+        try:
+            payload = call("POST", "/api/evaluation/case", json={"question": eval_question, "department": eval_department, "agent": "auto"})
+            st.json(payload['metrics'])
+            st.write(payload['result']['answer'])
+        except Exception as exc:
+            st.error(str(exc))
+    st.divider()
+    st.subheader("Download evidence-referenced PDF")
+    report_question = st.text_area("Report question", value=st.session_state.get('last_question', ''), key="report_question")
+    report_dept = st.selectbox("Report department", options, key="report_department")
+    if st.button("Generate PDF report", disabled=not report_question.strip()):
+        try:
+            response = requests.post(API + "/api/reports/answer.pdf",
+                headers={"Authorization": "Bearer " + st.session_state.token},
+                json={"question": report_question, "department": report_dept, "title": "Pharma AI Evidence Report", "agent": "auto"}, timeout=180)
+            response.raise_for_status()
+            st.session_state.generated_report = response.content
+        except Exception as exc:
+            st.error(str(exc))
+    if st.session_state.get('generated_report'):
+        st.download_button("Download PDF", data=st.session_state.generated_report,
+                           file_name="pharma_evidence_report.pdf", mime="application/pdf")

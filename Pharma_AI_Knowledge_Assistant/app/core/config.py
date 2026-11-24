@@ -15,5 +15,7 @@ class Settings(BaseSettings):
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:1.5b"
     rag_min_lexical_terms: int = 2
+    rag_reranker_enabled: bool = False
+    rag_reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 settings = Settings()
